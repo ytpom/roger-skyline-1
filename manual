@@ -1,0 +1,247 @@
+apt-get update && apt-get upgrade
+apt-get install build-essential module-assistant
+m-a prepare
+mount /media/cdrom
+sh /media/cdrom/VBoxLinuxAdditions.run
+Note that building kernel module must be successful. Now restart your virtual machine. You should be able to enter full screen mode by pressing Right Ctrl + F.
+
+
+Combining the two answers:
+
+Identify the resolution that your VirtualBox environment supports. Reboot the system and keep the Shift key till the grub windows appears then hit c. This will drop you into the grub console. Enter the commend vbeinfo to see a list of resolutions. Select the resolution that works for you (in my case, 1152x864x32).
+
+Edit /etc/default/grub to modify/create a line GRUB_GFXMODE=1152x864x32 (where you replace the resolution with the one appropriate for your environment).
+
+GRUB_GFXPAYLOAD_LINUX=1280x1024x24
+
+
+Edit /etc/grub.d/00_header to modify the line
+
+if [ "x${GRUB_GFXMODE}" = "x" ] ; then GRUB_GFXMODE=auto ; fi
+to
+
+if [ "x${GRUB_GFXMODE}" = "x" ] ; then GRUB_GFXMODE=1152x864x32 ; fi
+(again, replacing the resolution)
+
+Update grub and reboot: update-grub2 && shutdown -r now
+
+
+
+
+
+1.
+apt-get install sudo
+
+2.
+sudo usermod -a -G sudo user
+
+3.
+sudo apt-get install mc
+
+4.
+/etc/network/interfaces
+
+allow-hotplug enp0s3
+iface enp0s3 inet dhcp
+allow-hotplug enp0s8
+iface enp0s8 inet static
+address 192.168.57.2
+netmask 255.255.255.252
+
+5.
+sudo apt-get install openssh-server
+
+6.
+/etc/ssh/sshd_config
+...
+- #Port 22
++ Port 11111
+...
+- #PermitRootLogin prohibit-password
++ PermitRootLogin no
+...
+- #PasswordAuthentification yes
++ PasswordAuthentification no
+
+7.
+ssh-keygen
+user_rsa
+user_rsa.pub
+cat user_rsa.pub  > ~/.ssh/authorized_keys
+
+8.
+scp -P 11111 user@192.168.57.2:/home/user/.ssh/user_rsa.pub ~/.ssh/
+scp -P 11111 user@192.168.57.2:/home/user/.ssh/user_rsa ~/.ssh/
+ssh -i ~/.ssh/user_rsa user@192.168.57.2 -p 11111
+
+9.
+* Disable ipv6 in /etc/default/ufw
+>>>>
+- IPV6=yes
++ IPV6=no
+====
+$ sudo ufw enable
+$ sudo ufw default deny incoming
+$ sudo ufw default allow outgoing
+$ sudo ufw allow 11111/tcp
+$ sudo ufw allow 443/tcp
+$ sudo ufw logging low
+$ sudo ufw reload
+
+11. 
+sudo touch /var/log/apache2/server.log
+
+12.
+
+sudo vim /etc/fail2ban/jail.local
+
+[DEFAULT]
+destemail = jphilip-@student.21-school.ru
+sender = root@debian
+
+[sshd]
+port = 11111
+enabled = true
+maxretry = 5
+findtime = 120
+bantime = 60
+
+[sshd-ddos]
+port = 11111
+enabled = true
+
+[recidive]
+enabled = true
+
+[apache]
+enabled = true
+port = http, https
+filter = apache-auth
+logpath = /var/log/apache2*/*error.log
+maxretry = 6
+findtime = 600
+
+[apache-noscript]
+enabled = true
+
+[apache-overflows]
+
+enabled = true
+port = http, https
+filter = apache-overflows
+logpath = /var/log/apache2*/*error.log
+maxretry = 2
+
+[apache-badbots]
+
+enabled = true
+port = http,https
+filter = apache-badbots
+logpath = /var/log/apache2*/*error.log
+maxretry = 2
+
+[http-get-dos]
+enabled = true
+port = http, https
+filter = http-get-dos
+logpath = /var/log/apache2/access.log
+maxretry = 100
+findtime = 300
+bantime = 300
+action = iptables[name=HTTP, port=http, protocol=tcp]
+
+13.
+sudo vim /etc/fail2ban/filter.d/http-get-dos.conf
+
+[Definition]
+
+#Option: failregex
+#Note: Matches GET and POST
+
+failregex = ^<HOST> -.*"(GET|POST|CONNECT)
+
+#Option: ignoreregex
+#Notes.: Ignores specific regex
+#Values: TEXT
+
+ignoreregex =
+
+
+ab -n 2000 http://ya.ru/
+
+
+14.
+sudo systemctl restart fail2ban.service
+iptables -L
+
+15.
+systemctl list-unit-files | grep enabled
+apache2.service                                                        enabled
+console-getty.service                                                  enabled
+cron.service                                                           enabled
+fail2ban.service                                                       enabled
+keyboard-setup.service                                                 enabled
+netfilter-persistent.service                                           enabled
+networking.service                                                     enabled
+rsyslog.service                                                        enabled
+ssh.service                                                            enabled
+sshd.service                                                           enabled
+syslog.service                                                         enabled
+
+16.
+vim /home/user/update_script.sh
+
+#!/bin/bash
+date >> /var/log/update_script.log
+apt-get update >> /var/log/update_script.log
+apt-get upgrade >> /var/log/update_script.log
+echo -e "\n" >> /var/log/update_script.log
+/sbin/shutdown -r now
+
+chmod +x update_script.sh
+
+17.
+vim /home/user/watch_script.sh
+
+#!/bin/bash
+if [[ -z `find /etc/crontab -mmin -1440` ]]
+then
+	echo "/etc/crontab has not been modified since last check" | mailx -s 'Houston we have no problem' root@debian
+else
+	echo "/etc/crontab has been modified since last check" | mailx -s 'Houston we have a problem' root@debian
+fi
+
+$ chmod +x watch_script.sh
+
+
+19.
+$ sudo crontab -e
+
+0 0	* * *	/home/user/watch_script.sh
+0 4	* * 1	/home/user/update_script.sh
+
+20.
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/debian.com.key -out /etc/ssl/certs/debian.com.crt
+sudo vim /etc/apache2/sites-available/default-ssl.conf
+
+
+SSLEngine on
+SSLCertificateFile /etc/ssl/certs/debian.com.crt
+SSLCertificateKeyFile /etc/ssl/private/debian.com.key
+#SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+#SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+
+$ sudo apachectl configtest
+$ sudo a2enmod ssl
+$ sudo a2ensite default-ssl
+$ sudo systemctl restart apache2.service
+
+wget https://www.quackit.com/html/templates/download/bootstrap/business-2.zip
+cp * /var/www/html
+
+            <div class="header-content-inner">
+                <h1>Roger-Skyline</h1>
+                <p>Я не хочу чтобы Руслана опять звонила мне и ругалась =(</p>
+		<a href="https://profile.intra.42.fr" class="btn btn-primary btn-lg">42!</a>
+            </div>
+
